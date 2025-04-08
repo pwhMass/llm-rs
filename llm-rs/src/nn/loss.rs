@@ -24,7 +24,7 @@ impl NeuralNetwork for Loss {
     fn forward(
         &mut self,
         inputs: impl IntoIterator<Item = RwRc<Tensor<Blob>>>,
-        _ctx: &mut Context,
+        ctx: &mut Context,
     ) -> Vec<RwRc<Tensor<Blob>>> {
         destruct!([logits, targets] = inputs);
         self.targets.replace(targets);
@@ -40,7 +40,7 @@ impl NeuralNetwork for Loss {
         let mut probs = Tensor::contiguous_of(logits).map(Blob::new);
         softmax(probs.as_deref_mut(), logits.as_deref(), *nvoc);
 
-        let mut losses = Tensor::new(probs.dt(), &targets.shape()).map(Blob::new);
+        let mut losses = ctx.tensor(probs.dt(), &targets.shape());
         crossentropy(losses.as_deref_mut(), probs.as_deref(), targets.as_deref());
 
         self.probs.replace(probs);

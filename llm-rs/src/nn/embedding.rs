@@ -1,7 +1,6 @@
-﻿use super::{NeuralNetwork, macros::*, unique};
+﻿use super::{NeuralNetwork, macros::*};
 use crate::{Blob, Context, Tensor};
 use digit_layout::types;
-use std::{iter::zip, ops::Add};
 use tensor::rw_rc::RwRc;
 
 pub struct Embedding {
@@ -37,25 +36,21 @@ impl NeuralNetwork for Embedding {
         dims!([batch_size, n_seq] = tokens);
 
         dims!([_, d] = te);
-        let mut y = Tensor::new(te.dt(), &[batch_size, n_seq, d]).map(Blob::new);
+        let mut y = ctx.tensor(te.dt(), &[batch_size, n_seq, d]);
 
-        {
-            let y = y.as_deref_mut().merge(0, 2);
-            let i1 = tokens.as_deref().merge(0, 2);
-            let i2 = Tensor::new(types::U16, &[batch_size * n_seq]).map(|len| {
-                let mut blob = Blob::new(len);
-                let ([], slice, []) = (unsafe { blob.align_to_mut::<u16>() }) else {
-                    unreachable!()
-                };
-                for i in 0..batch_size {
-                    for j in 0..n_seq {
-                        slice[i * n_seq + j] = j as _
-                    }
-                }
-                blob
-            });
-            ctx.bench(|| forward::embedding(y, i1, i2.as_deref(), te.as_deref(), pe.as_deref()))
-        }
+        let i1 = tokens.as_deref().merge(0, 2);
+        let mut i2 = ctx.tensor(types::U16, &[batch_size * n_seq]);
+        build_pos(i2.get_mut(), BatchIter::new(batch_size, n_seq));
+
+        ctx.bench(|| {
+            forward::embedding(
+                y.as_deref_mut().merge(0, 2),
+                i1,
+                i2.as_deref(),
+                te.as_deref(),
+                pe.as_deref(),
+            )
+        });
 
         vec![y.share()]
     }
@@ -68,33 +63,23 @@ impl NeuralNetwork for Embedding {
         destruct!([dy] = inputs);
         let Self { te, pe, tokens } = self;
 
-        {
-            let i1 = tokens.take().unwrap();
-            dims!([batch_size, n_seq] = i1.read());
-            let i2 = Tensor::new(types::U16, &[batch_size * n_seq]).map(|len| {
-                let mut blob = Blob::new(len);
-                let ([], slice, []) = (unsafe { blob.align_to_mut::<u16>() }) else {
-                    unreachable!()
-                };
-                for i in 0..batch_size {
-                    for j in 0..n_seq {
-                        slice[i * n_seq + j] = j as _
-                    }
-                }
-                blob
-            });
-            let dtable1 = ctx.write_gradient("wte", te);
-            let dtable2 = ctx.write_gradient("wpe", pe);
-            ctx.bench(|| {
-                backward::embedding(
-                    dtable1.write().as_deref_mut(),
-                    dtable2.write().as_deref_mut(),
-                    dy.read().as_deref().merge(0, 2),
-                    i1.read().as_deref().merge(0, 2),
-                    i2.as_deref(),
-                )
-            })
-        }
+        let dtable1 = ctx.write_gradient("wte", te);
+        let dtable2 = ctx.write_gradient("wpe", pe);
+
+        let i1 = tokens.take().unwrap();
+        dims!([batch_size, n_seq] = i1.read());
+        let mut i2 = ctx.tensor(types::U16, &[batch_size * n_seq]);
+        build_pos(i2.get_mut(), BatchIter::new(batch_size, n_seq));
+
+        ctx.bench(|| {
+            backward::embedding(
+                dtable1.write().as_deref_mut(),
+                dtable2.write().as_deref_mut(),
+                dy.read().as_deref().merge(0, 2),
+                i1.read().as_deref().merge(0, 2),
+                i2.as_deref(),
+            )
+        });
 
         te.release();
         pe.release();
@@ -113,8 +98,54 @@ impl<T: Copy + Sync + Into<usize>> Index for T {
     }
 }
 
+struct BatchIter {
+    batch_size: usize,
+    seq_len: usize,
+    index: usize,
+}
+
+impl BatchIter {
+    fn new(batch_size: usize, seq_len: usize) -> Self {
+        Self {
+            batch_size,
+            seq_len,
+            index: 0,
+        }
+    }
+}
+
+impl Iterator for BatchIter {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index / self.seq_len < self.batch_size {
+            Some(self.index % self.seq_len)
+        } else {
+            None
+        }
+    }
+}
+
+fn build_pos(buf: &mut [u8], nseqs: impl IntoIterator<Item = usize>) {
+    let ([], mut slice, []) = (unsafe { buf.align_to_mut::<u16>() }) else {
+        unreachable!()
+    };
+    for nseq in nseqs {
+        for i in 0..nseq {
+            slice[0] = i as _;
+            slice = &mut slice[1..]
+        }
+    }
+}
+
 mod forward {
-    use super::*;
+    use super::Index;
+    use crate::{
+        Tensor,
+        nn::{macros::*, unique},
+    };
+    use digit_layout::types;
+    use std::{iter::zip, ops::Add};
 
     pub(super) fn embedding(
         mut y: Tensor<&mut [u8]>,
@@ -197,9 +228,13 @@ mod forward {
 }
 
 mod backward {
-    use std::ops::AddAssign;
-
-    use super::*;
+    use super::Index;
+    use crate::{
+        Tensor,
+        nn::{macros::*, unique},
+    };
+    use digit_layout::types;
+    use std::{iter::zip, ops::AddAssign};
 
     pub(super) fn embedding(
         mut dtable1: Tensor<&mut [u8]>,

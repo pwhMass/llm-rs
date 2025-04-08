@@ -38,11 +38,9 @@ impl NeuralNetwork for LayerNorm {
         let x = x.as_ref().unwrap().read();
         dims!([batch_size, n_seq, d] = x);
 
-        let tensor = |shape: &[usize]| Tensor::new(x.dt(), shape).map(Blob::new);
-
-        let mut y = tensor(&[batch_size, n_seq, d]);
-        let mut mean = tensor(&[batch_size, n_seq]);
-        let mut rstd = tensor(&[batch_size, n_seq]);
+        let mut y = ctx.tensor(x.dt(), &[batch_size, n_seq, d]);
+        let mut mean = ctx.tensor(x.dt(), &[batch_size, n_seq]);
+        let mut rstd = ctx.tensor(x.dt(), &[batch_size, n_seq]);
 
         ctx.bench(|| {
             forward(

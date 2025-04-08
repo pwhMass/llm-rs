@@ -1,4 +1,5 @@
 ﻿use crate::{Blob, Tensor, nn::NeuralNetwork, optimizer::Optimizer};
+use digit_layout::DigitLayout;
 use std::{
     collections::{HashMap, HashSet},
     time::Instant,
@@ -97,6 +98,14 @@ impl Context {
         inputs: impl IntoIterator<Item = RwRc<Tensor<Blob>>>,
     ) -> Vec<RwRc<Tensor<Blob>>> {
         self.trap(name, |ctx| nn.backward(inputs, ctx))
+    }
+
+    pub fn tensor(&self, dt: DigitLayout, shape: &[usize]) -> Tensor<Blob> {
+        Tensor::new(dt, shape).map(Blob::new)
+    }
+
+    pub fn tensor_zeroed(&self, dt: DigitLayout, shape: &[usize]) -> Tensor<Blob> {
+        Tensor::new(dt, shape).map(Blob::new_zeroed)
     }
 
     pub fn bench(&self, f: impl FnOnce()) {

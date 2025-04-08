@@ -34,12 +34,10 @@ impl NeuralNetwork for Attention {
         let x = x.as_ref().unwrap().read();
         dims!([batch_size, n_seq, d3] = x);
 
-        let tensor = |shape: &[usize]| Tensor::new(x.dt(), shape).map(Blob::new_zeroed);
-
         let d = d3 / 3;
-        let mut y = tensor(&[batch_size, n_seq, d]);
-        let mut preatt = tensor(&[batch_size, *nh, n_seq, n_seq]);
-        let mut att = tensor(&[batch_size, *nh, n_seq, n_seq]);
+        let mut y = ctx.tensor_zeroed(x.dt(), &[batch_size, n_seq, d]);
+        let mut preatt = ctx.tensor_zeroed(x.dt(), &[batch_size, *nh, n_seq, n_seq]);
+        let mut att = ctx.tensor_zeroed(x.dt(), &[batch_size, *nh, n_seq, n_seq]);
 
         ctx.bench(|| {
             forward(

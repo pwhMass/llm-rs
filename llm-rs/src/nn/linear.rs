@@ -37,7 +37,7 @@ impl NeuralNetwork for Linear {
         let w = w.read();
         dims!([batch_size, seq_len, _] = x);
         dims!([d, _] = w);
-        let mut y = Tensor::new(x.dt(), &[batch_size, seq_len, d]).map(Blob::new);
+        let mut y = ctx.tensor(x.dt(), &[batch_size, seq_len, d]);
 
         ctx.bench(|| {
             forward(
